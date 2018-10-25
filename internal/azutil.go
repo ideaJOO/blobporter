@@ -16,6 +16,11 @@ import (
 	"github.com/Azure/blobporter/util"
 
 	"github.com/Azure/azure-storage-blob-go/2016-05-31/azblob"
+	"hash"
+	"strings"
+	"crypto/sha256"
+	"crypto/md5"
+	"encoding/hex"
 )
 
 //AzUtil TODO
@@ -50,7 +55,7 @@ func NewAzUtil(accountName string, accountKey string, container string, baseBlob
 
 	return &AzUtil{serviceURL: &surl,
 		containerURL: &curl,
-		creds:        creds}, nil
+		creds: creds}, nil
 }
 
 //CreateContainerIfNotExists returs true if the container did not exist.
@@ -111,7 +116,7 @@ func (p *AzUtil) blobExists(bburl azblob.BlockBlobURL) (bool, error) {
 
 //CleanUncommittedBlocks TODO
 func (p *AzUtil) CleanUncommittedBlocks(blobName string) error {
-	bburl := p.containerURL.NewBlockBlobURL(blobName)
+	bburl := p.containerURL.NewBlockBlobURL(ReBlobName(blobName))
 
 	exists, err := p.blobExists(bburl)
 
@@ -155,7 +160,7 @@ func (p *AzUtil) CleanUncommittedBlocks(blobName string) error {
 
 //PutBlockList TODO
 func (p *AzUtil) PutBlockList(blobName string, blockIDs []string) error {
-	bburl := p.containerURL.NewBlockBlobURL(blobName)
+	bburl := p.containerURL.NewBlockBlobURL(ReBlobName(blobName))
 
 	h := azblob.BlobHTTPHeaders{}
 	ctx := context.Background()
@@ -178,7 +183,7 @@ func (p *AzUtil) PutEmptyBlockBlob(blobName string) error {
 //PutBlock TODO
 func (p *AzUtil) PutBlock(container string, blobName string, id string, body io.ReadSeeker) error {
 	curl := p.serviceURL.NewContainerURL(container)
-	bburl := curl.NewBlockBlobURL(blobName)
+	bburl := curl.NewBlockBlobURL(ReBlobName(blobName))
 
 	ctx := context.Background()
 	resp, err := bburl.PutBlock(ctx, id, body, azblob.LeaseAccessConditions{})
@@ -193,7 +198,7 @@ func (p *AzUtil) PutBlock(container string, blobName string, id string, body io.
 
 //PutBlockBlob TODO
 func (p *AzUtil) PutBlockBlob(blobName string, body io.ReadSeeker, md5 []byte) error {
-	bburl := p.containerURL.NewBlockBlobURL(blobName)
+	bburl := p.containerURL.NewBlockBlobURL(ReBlobName(blobName))
 
 	h := azblob.BlobHTTPHeaders{}
 
@@ -209,6 +214,7 @@ func (p *AzUtil) PutBlockBlob(blobName string, body io.ReadSeeker, md5 []byte) e
 	resp, err := bburl.PutBlob(ctx, body, h, azblob.Metadata{}, azblob.BlobAccessConditions{})
 
 	if err != nil {
+
 		return err
 	}
 
@@ -219,7 +225,7 @@ func (p *AzUtil) PutBlockBlob(blobName string, body io.ReadSeeker, md5 []byte) e
 
 //CreatePageBlob TODO
 func (p *AzUtil) CreatePageBlob(blobName string, size uint64) error {
-	pburl := p.containerURL.NewPageBlobURL(blobName)
+	pburl := p.containerURL.NewPageBlobURL(ReBlobName(blobName))
 	h := azblob.BlobHTTPHeaders{}
 	ctx := context.Background()
 
@@ -235,7 +241,7 @@ func (p *AzUtil) CreatePageBlob(blobName string, size uint64) error {
 
 //PutPages TODO
 func (p *AzUtil) PutPages(blobName string, start int64, end int64, body io.ReadSeeker) error {
-	pburl := p.containerURL.NewPageBlobURL(blobName)
+	pburl := p.containerURL.NewPageBlobURL(ReBlobName(blobName))
 	pageRange := azblob.PageRange{
 		Start: start,
 		End:   end}
@@ -253,13 +259,13 @@ func (p *AzUtil) PutPages(blobName string, start int64, end int64, body io.ReadS
 
 //GetBlobURLWithReadOnlySASToken  TODO
 func (p *AzUtil) GetBlobURLWithReadOnlySASToken(blobName string, expTime time.Time) url.URL {
-	bu := p.containerURL.NewBlobURL(blobName)
+	bu := p.containerURL.NewBlobURL(ReBlobName(blobName))
 	bp := azblob.NewBlobURLParts(bu.URL())
 
 	sas := azblob.BlobSASSignatureValues{BlobName: blobName,
 		ContainerName: bp.ContainerName,
-		ExpiryTime:    expTime,
-		Permissions:   "r"}
+		ExpiryTime: expTime,
+		Permissions: "r"}
 
 	sq := sas.NewSASQueryParameters(p.creds)
 	bp.SAS = sq
@@ -453,4 +459,94 @@ func newpipelineHTTPClient() *http.Client {
 			DisableCompression:     false,
 			MaxResponseHeaderBytes: 0}}
 
+}
+
+// Add @ideaJOO
+func ReBlobName(rawBlobName string, infos ...interface{}) (renamedBlobNames string) {
+
+	// 1. Parse
+	// 2. Get UserID , PathKey , FileKey
+
+	var userID string
+	var pathKey string
+	var fileKey string
+
+	parseInfo, err := ParsingRawBlobName(rawBlobName, infos)
+	if err != nil {
+		return rawBlobName
+	}
+
+	userID = parseInfo.User
+	pathKey = CalCheckSum(parseInfo.Path)
+	fileKey = CalCheckSum(parseInfo.File)
+
+	renamedBlobNames = fmt.Sprintf("%s%s%s", userID, pathKey, fileKey)
+	return renamedBlobNames
+}
+
+type ParsedPathInfo struct {
+	User string
+	Path string
+	File string
+}
+
+// Add @ideaJOO
+func ParsingRawBlobName(tBlobName string, infos ...interface{}) (parsePathInfo ParsedPathInfo, err error) {
+
+	// Sample
+	// ParsingRawBlobName("/sijoo/path1/path2/file.png")  		=> sijoo path1/path2	file.png
+	// ParsingRawBlobName("a/b/c/sijoo/path1/path2/file.png",3) => sijoo path1/path2  	file.png
+	// ParsingRawBlobName("/a/c/sijoo/file.png",2)				=> sijoo "" 			file.png
+	// ParsingRawBlobName("a@b@sijoo@file.png",2,"@")			=> sijoo ""				file.png
+
+	sIndex := 0
+	delimiter := "/"
+
+	if len(infos) == 1 {
+		sIndex = infos[0].(int)
+	} else if len(infos) == 2 {
+		sIndex = infos[0].(int)
+		delimiter = infos[1].(string)
+	}
+
+	if string(tBlobName[0]) != delimiter {
+		tBlobName = fmt.Sprintf("%s%s", delimiter, tBlobName)
+	}
+
+	paths := strings.Split(tBlobName[1:], delimiter)[sIndex:]
+	numPaths := len(paths)
+	if numPaths < 2 {
+		// Default Format = {userid}{pathName}{fileName}
+		// MinCase = {userid}{fileName}
+		// there is case what has no pathName.
+		return parsePathInfo, fmt.Errorf("incorrect your args : %s, %s", tBlobName, infos)
+	}
+
+	uID := paths[0]
+	pathName := strings.Join(paths[1:numPaths-1], "/")
+	fileName := paths[numPaths-1]
+	parsePathInfo = ParsedPathInfo{uID, pathName, fileName}
+
+	return parsePathInfo, nil
+}
+
+// Add @ideaJOO
+func CalCheckSum(target string, algorithm ...string) string {
+	var tHash hash.Hash
+
+	tAlgorithm := "MD5"
+	if len(algorithm) != 0 {
+		tAlgorithm = algorithm[0]
+	}
+
+	switch strings.ToUpper(tAlgorithm) {
+	case "MD5":
+		tHash = md5.New()
+	case "SHA256":
+		tHash = sha256.New()
+	default:
+		return "checksum1234"
+	}
+	tHash.Write([]byte(target))
+	return hex.EncodeToString(tHash.Sum(nil))
 }

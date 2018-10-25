@@ -142,6 +142,7 @@ func (t *AzureBlockTarget) WritePart(part *pipeline.Part) (duration time.Duratio
 	reader := bytes.NewReader(part.Data)
 	util.PrintfIfDebug("WritePart -> blockid:%v reader:%v name:%v err:%v", part.BlockID, reader.Len(), part.TargetAlias, err)
 
+	// TODO ideaJOO: part.BlockID or part.TargetAlias -> MD5 : Required Check
 	err = t.azutil.PutBlock(t.container, part.TargetAlias, part.BlockID, reader)
 	return
 }
