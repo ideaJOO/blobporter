@@ -462,7 +462,7 @@ func newpipelineHTTPClient() *http.Client {
 }
 
 // Add @ideaJOO
-func ReBlobName(rawBlobName string, infos ...interface{}) (renamedBlobNames string) {
+func ReBlobName(rawBlobName string) (renamedBlobNames string) {
 
 	// 1. Parse
 	// 2. Get UserID , PathKey , FileKey
@@ -471,7 +471,7 @@ func ReBlobName(rawBlobName string, infos ...interface{}) (renamedBlobNames stri
 	var pathKey string
 	var fileKey string
 
-	parseInfo, err := ParsingRawBlobName(rawBlobName, infos)
+	parseInfo, err := ParsingRawBlobName(rawBlobName)
 	if err != nil {
 		return rawBlobName
 	}
@@ -480,7 +480,7 @@ func ReBlobName(rawBlobName string, infos ...interface{}) (renamedBlobNames stri
 	pathKey = CalCheckSum(parseInfo.Path)
 	fileKey = CalCheckSum(parseInfo.File)
 
-	renamedBlobNames = fmt.Sprintf("%s%s%s", userID, pathKey, fileKey)
+	renamedBlobNames = fmt.Sprintf("%s-%s-%s", userID, pathKey, fileKey)
 	return renamedBlobNames
 }
 
@@ -491,7 +491,7 @@ type ParsedPathInfo struct {
 }
 
 // Add @ideaJOO
-func ParsingRawBlobName(tBlobName string, infos ...interface{}) (parsePathInfo ParsedPathInfo, err error) {
+func ParsingRawBlobName(tBlobName string) (parsePathInfo ParsedPathInfo, err error) {
 
 	// Sample
 	// ParsingRawBlobName("/sijoo/path1/path2/file.png")  		=> sijoo path1/path2	file.png
@@ -501,13 +501,6 @@ func ParsingRawBlobName(tBlobName string, infos ...interface{}) (parsePathInfo P
 
 	sIndex := 0
 	delimiter := "/"
-
-	if len(infos) == 1 {
-		sIndex = infos[0].(int)
-	} else if len(infos) == 2 {
-		sIndex = infos[0].(int)
-		delimiter = infos[1].(string)
-	}
 
 	if string(tBlobName[0]) != delimiter {
 		tBlobName = fmt.Sprintf("%s%s", delimiter, tBlobName)
@@ -519,11 +512,13 @@ func ParsingRawBlobName(tBlobName string, infos ...interface{}) (parsePathInfo P
 		// Default Format = {userid}{pathName}{fileName}
 		// MinCase = {userid}{fileName}
 		// there is case what has no pathName.
-		return parsePathInfo, fmt.Errorf("incorrect your args : %s, %s", tBlobName, infos)
+		return parsePathInfo, fmt.Errorf("incorrect your args : %s", tBlobName)
 	}
 
-	uID := paths[0]
-	pathName := strings.Join(paths[1:numPaths-1], "/")
+	startIdx := 0 // TODO Control Index to Handle Parsed-Paths. @ideaJOO
+
+	uID := paths[startIdx]
+	pathName := strings.Join(paths[startIdx+1:numPaths-1], "/")
 	fileName := paths[numPaths-1]
 	parsePathInfo = ParsedPathInfo{uID, pathName, fileName}
 
